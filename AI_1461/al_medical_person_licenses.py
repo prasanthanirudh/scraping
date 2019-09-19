@@ -17,6 +17,7 @@ from Data_scuff.utils.utils import Utils
 from scrapy.shell import inspect_response
 from inline_requests import inline_requests
 from Data_scuff.utils.searchCriteria import SearchCriteria
+import time
 
 class AlMedicalPersonLicensesSpider(CommonSpider):
     name = '1461_al_medical_person_licenses'
@@ -24,7 +25,7 @@ class AlMedicalPersonLicensesSpider(CommonSpider):
     start_urls = ['https://abme.igovsolution.com/online/Lookups/Individual_Lookup.aspx']
     site_key='6LchcFEUAAAAAJdfnpZDr9hVzyt81NYOspe29k-x'
     custom_settings = {
-        'FILE_NAME':Utils.getRundateFileName('AlMedicalPersonLicensesSpider'),
+        'FILE_NAME':Utils.getRundateFileName('AI-1461_Licenses_Medical_Person_AL_CurationReady_'),
         'JIRA_ID':'AI_1461',
         'HTTPCACHE_ENABLED': False,
         'CONCURRENT_REQUESTS':1,
@@ -42,13 +43,13 @@ class AlMedicalPersonLicensesSpider(CommonSpider):
                          'permit_lic_status': 'License status',
                          'permit_subtype': 'License type',
                          'permit_type': '',
-                         'person_name': "Licensee name/physician's name",
+                         'company_name': "Licensee name/physician's name",
                          "physician's license": "Physician's License",
                          'practice type': 'Practice Type',
                          'ra/cp number': 'RA/CP Number',
                          'school name': 'School Name'},
         'FIELDS_TO_EXPORT':[                        
-                         'person_name',
+                         'company_name',
                          "physician's license",
                          'pa/crnp/cnm name',
                          'ra/cp number',
@@ -76,24 +77,21 @@ class AlMedicalPersonLicensesSpider(CommonSpider):
         super(AlMedicalPersonLicensesSpider, self).__init__(start,end, proxyserver=None,*a, **kw) 
         self.search_element = SearchCriteria.strRange(start,end)
 
-
     def parse(self, response):
-
         yield scrapy.Request(response.urljoin('/online/JS_grd/Grid.svc/Verifycaptcha'),
                    method='POST',body=json.dumps({"resp":self.getcaptchaCoder(self.site_key).resolver(response.url),
                                     "uip":""}),
-                   headers={'Content-Type':'application/json'}, callback=self.verify_captcha)
-
+                   headers={'Content-Type':'application/json'}, callback=self.verify_captcha,dont_filter=True)
     def dict(self, lic_typee):
         dict1={
-        'MD':'Medical Doctor','DO':'Doctor of Osteopathy','L':'Limited MD or DO','PA':'Physician Assistant','AA':'Anesthesiologist Assistant','TA':'temporary Physician Assistant','SP':'Special Purpose(Tele Medicine)','RA':'','CP':'','ACSC':'Alabama Controlled Substance Certificate','QACSC':'Qualified Alabama Controlled Substance Certificate','QACSCNP':'','LPSP':'','RSV':''}
+        'MD':'Medical Doctor','DO':'Doctor of Osteopathy','L':'Limited MD or DO','PA':'Physician Assistant','AA':'Anesthesiologist Assistant','TA':'temporary Physician Assistant','SP':'Special Purpose(Tele Medicine)','RA':'RA','CP':'CP','ACSC':'Alabama Controlled Substance Certificate','QACSC':'Qualified Alabama Controlled Substance Certificate','QACSCNP':'QACSCNP','LPSP':'LPSP','RSV':'RSV'}
         return dict1.get(lic_typee, "")
     def verify_captcha(self, response):
 
         if len(self.search_element) > 0:
+
             param=self.search_element.pop(0)
-        
-            print('--------------------param---------',param)
+            print('--------------------------------------------parse',param)
             jsonresponse = json.loads(response.body_as_unicode())
             formdata = {
                 'county':'-1',
@@ -108,7 +106,6 @@ class AlMedicalPersonLicensesSpider(CommonSpider):
                 'sortexp': '',
                 'vid': jsonresponse['d'],
             }
-
             yield scrapy.Request(response.urljoin('/online/JS_grd/Grid.svc/GetIndv_license'),
                            method='POST',
                        body=json.dumps(formdata),
@@ -117,12 +114,14 @@ class AlMedicalPersonLicensesSpider(CommonSpider):
     @inline_requests
     def getIndv_license(self, response):
         meta=response.meta
+        person_name=''
+        detail_page=''
+        
         aa =json.loads(json.loads(response.body_as_unicode())['d'])
         val = json.loads(json.loads(response.body_as_unicode())['d'])['Response']
         temp_name=''
         location_address_string_temp='Alabama'
         if val:
-            print("==============>solved")
             for item_ in json.loads(val):
                 lic_id = item_['App_ID']
                 lic_type = item_['License_Type']
@@ -143,38 +142,45 @@ class AlMedicalPersonLicensesSpider(CommonSpider):
                     detail_page=yield scrapy.Request(url='https://abme.igovsolution.com/online/ABME_Prints/print_Quality_CSC.aspx?appid='+str(lic_id),method='GET')
                 elif lic_type =='LPSP':
                     detail_page=yield scrapy.Request(url='https://abme.igovsolution.com/online/ABME_Prints/Print_LPSPaspx.aspx?appid='+str(lic_id),method='GET')
+
                 person_name1= detail_page.xpath("//span[contains(text(),'Licensee name')]/ancestor::div/following-sibling::div/span/text()").extract_first()
-                # print("permit_subtype----------------------------------------->",lic_type)
-                permit_subtype=self.dict(lic_type)
-                # print("permit_subtype-------------------------------------->",permit_subtype)
                 person_name=person_name1 if person_name1 else temp_name
-                textt = "Physician's License:" or "physician's license:"
+                
+                permit_subtype=self.dict(lic_type)
+               
+                textt = ("physician's license:" or "Physician's License:")
                 physician_lic= detail_page.xpath('//span[contains(text(),"'+textt+'")]/ancestor::div/following-sibling::div/span/text()').extract_first()
                 pa_cp_ra_name = detail_page.xpath("//span[contains(text(),'PA/CRNP/CNM Name:')]/ancestor::div/following-sibling::div/span/text()").extract_first()
                 ra_cp_number = detail_page.xpath("//span[contains(text(),'RA/CP Number:')]/ancestor::div/following-sibling::div/span/text()").extract_first()
 
-                location_address_string1 = str(detail_page.xpath("//span[contains(text(),'Location:')]/ancestor::div/following-sibling::div/span/text()").extract_first()).strip().replace(',','')
-                print("999999999999999999999999999999999999999999999999999999",location_address_string1)
-                print("--------------------------------------------------->",len(location_address_string1))
+                location_address_string1 = str(detail_page.xpath("//span[contains(text(),'Location:')]/ancestor::div/following-sibling::div/span/text()").extract_first()).strip()
+              
                 location_address_string = location_address_string1 if location_address_string1 else location_address_string_temp
                 
                 permit_lic_status=detail_page.xpath("//span[contains(text(),'License status:')]/ancestor::div/following-sibling::div/span/text()").extract_first()
                 coq_status= detail_page.xpath("//span[contains(text(),'COQ status:')]/ancestor::div/following-sibling::div/span/text()").extract_first()
                 permit_lic_number = detail_page.xpath("//span[contains(text(),'License number:')]/ancestor::div/following-sibling::div/span/text()").extract_first()
+
+                permit_lic_desc=''
+
                 permit_lic_desc = detail_page.xpath("//span[contains(text(),'License description:')]/ancestor::div/following-sibling::div/span/text()").extract_first()
+
+                if not permit_lic_desc:
+                    permit_lic_desc = detail_page.xpath("//span[contains(text(),'Description:')]/ancestor::div/following-sibling::div/span/text()").extract_first()
+
                 permit_lic_eff_date = detail_page.xpath("//span[contains(text(),'Issue date:')]/ancestor::div/following-sibling::div/span/text()").extract_first()
                 permit_lic_exp_date = detail_page.xpath("//span[contains(text(),'Expiration date:')]/ancestor::div/following-sibling::div/span/text()").extract_first()
                 practice_type = detail_page.xpath("//span[contains(text(),'Practice Type')]/ancestor::div/following-sibling::div/span/text()").extract_first()
                 school_name = detail_page.xpath("//span[contains(text(),'School Name:')]/ancestor::div/following-sibling::div/span/text()").extract_first()
 
-                # print("=========================================================",permit_lic_exp_date,lic_type,person_name)
-                # self.state['items_count'] = self.state.get('items_count', 0) + 1
+                # print("===================================page======================",person_name)
+
                 il = ItemLoader(item=AlMedicalPersonLicensesSpiderItem(),response=response)
                 il.default_input_processor = MapCompose(lambda v: v.strip(), remove_tags, replace_escape_chars)
                 il.add_value('ingestion_timestamp', Utils.getingestion_timestamp())
                 il.add_value('url', 'https://abme.igovsolution.com/online/Lookups/Individual_Lookup.aspx')
                 il.add_value('sourceName', 'AL_Medical_Person_Licenses')
-                il.add_value('person_name',person_name)
+                il.add_value('company_name',person_name)
                 il.add_value("physician's license",physician_lic)
                 il.add_value('pa/crnp/cnm name',pa_cp_ra_name)
                 il.add_value('ra/cp number',ra_cp_number)
@@ -182,7 +188,7 @@ class AlMedicalPersonLicensesSpider(CommonSpider):
                 il.add_value('permit_lic_status',permit_lic_status)
                 il.add_value('coq status', coq_status)
                 il.add_value('permit_lic_no',permit_lic_number)
-                il.add_value('permit_lic_desc',permit_lic_desc)
+                il.add_value('permit_lic_desc',permit_lic_desc if permit_lic_desc else 'medical_license')
                 il.add_value('permit_lic_eff_date',permit_lic_eff_date)
                 il.add_value('permit_lic_exp_date',permit_lic_exp_date)
                 il.add_value('practice type', practice_type)
@@ -193,6 +199,7 @@ class AlMedicalPersonLicensesSpider(CommonSpider):
 
         total = aa['reccount']   #page_count
         page=response.meta['page']
+        print("8888888888888888888888888888888888888888888888888888888",page)
         vid=response.meta['vid']
         param=response.meta['param']
         if total:
@@ -202,18 +209,14 @@ class AlMedicalPersonLicensesSpider(CommonSpider):
                 headers={
                 'Accept': 'application/json, text/javascript, */*; q=0.01',
                 'Content-Type': 'application/json; charset=UTF-8',
-                # 'Host': 'abme.igovsolution.com',
                 'Origin': 'https://abme.igovsolution.com',
                 'Referer': 'https://abme.igovsolution.com/online/Lookups/Individual_Lookup.aspx',
                 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.100 Safari/537.36',
                 'X-Requested-With': 'XMLHttpRequest',
-                # 'Cookie': 'ASP.NET_SessionId=bfmszuy441lnxiinwh0ivdzo; WWTHREADSID=ThisIsThEValue'
                 }
                 body=json.loads(json.dumps('{"lnumber":"","lname":"'+str(param)+'","fname":"","lictype":"-1","county":"-1","vid":"'+str(vid)+'","pageSize":20,"page":'+str(page)+',"sortby":"","sortexp":"","sdata":[]}'))
-                print(body,'------------------body')
-
-
                 yield scrapy.FormRequest(url='https://abme.igovsolution.com/online/JS_grd/Grid.svc/GetIndv_license',method='POST',headers=headers,body=body,callback=self.getIndv_license,meta={'page':int(page)+1,'vid':vid,'param':param})
-
             elif len(self.search_element) > 0:
+                print("-------------------------------------------",self.search_element)
+                time.sleep(120)
                 yield scrapy.Request(url=self.start_urls[0], callback=self.parse, dont_filter=True)
